@@ -117,74 +117,130 @@ jobs:
           Invoke-WebRequest -Uri "https://dist.nuget.org/win-x86-commandline/latest/nuget.exe" -OutFile nuget.exe
         shell: pwsh
 
-      - name: Run simple nuget command
+      - name: Build & run nuget command 
         id: execute
         run: |
           $cmd = ""
-          $cmdType = "${{ inputs.command }}" .ToLower()
+          $c = "${{ inputs.command }}".ToLower()
 
-          if ($cmdType -eq "restore") {
-            $cmd = ".\nuget.exe restore `"$(${{ inputs.restoreSolution }})`""
-            if ("${{ inputs.nugetConfigPath }}" -ne "") { $cmd += " -ConfigFile `"$(${{ inputs.nugetConfigPath }})`"" }
-            if ("${{ inputs.restoreDirectory }}" -ne "") { $cmd += " -PackagesDirectory `"$(${{ inputs.restoreDirectory }})`"" }
+          if ($c -eq "restore") {
+            # basic restore invocation
+            $cmd = "nuget.exe restore `"$(${{ inputs.restoreSolution }})`" 
+
+            # feeds selection logic
+            if ("${{ inputs.feedsToUse }}" -eq "config") {
+              if ("${{ inputs.nugetConfigPath }}" -ne "") {
+                $cmd += " -ConfigFile `"$(${{ inputs.nugetConfigPath }})`" 
+                Write-Host "Using nuget.config at $(${{ inputs.nugetConfigPath }})"
+              }
+              if ("${{ inputs.externalFeedCredentials }}" -ne "") {
+                Write-Host "External feed credentials provided; ensure nuget.config includes source credentials or credential provider."
+              }
+            } else {
+              # select mode
+              if ("${{ inputs.vstsFeed }}" -ne "") {
+                $cmd += " -Source `"$(${{ inputs.vstsFeed }})`" 
+              } elseif ("${{ inputs.includeNuGetOrg }}" -eq "true") {
+                # nuget.org is used by default if includeNuGetOrg true
+                Write-Host "NuGet.org packages allowed in restore"
+              }
+            }
+
+            # optional flags
+            if ("${{ inputs.restoreDirectory }}" -ne "") { $cmd += " -PackagesDirectory `"$(${{ inputs.restoreDirectory }})`" }
             if ("${{ inputs.noCache }}" -eq "true") { $cmd += " -NoCache" }
             if ("${{ inputs.disableParallelProcessing }}" -eq "true") { $cmd += " -DisableParallelProcessing" }
             if ("${{ inputs.verbosityRestore }}" -ne "") { $cmd += " -Verbosity $(${{ inputs.verbosityRestore }})" }
           }
-          elseif ($cmdType -eq "pack") {
-            $cmd = ".\nuget.exe pack `"$(${{ inputs.packagesToPack }})`""
-            if ("${{ inputs.basePath }}" -ne "") { $cmd += " -BasePath `"$(${{ inputs.basePath }})`"" }
-            if ("${{ inputs.packDestination }}" -ne "") { $cmd += " -OutputDirectory `"$(${{ inputs.packDestination }})`"" }
+          elseif ($c -eq "pack") {
+            # pack invocation
+            $cmd = "nuget.exe pack `"$(${{ inputs.packagesToPack }})`" 
+
+            if ("${{ inputs.basePath }}" -ne "") { $cmd += " -BasePath `"$(${{ inputs.basePath }})`" }
+            if ("${{ inputs.packDestination }}" -ne "") { $cmd += " -OutputDirectory `"$(${{ inputs.packDestination }})`" }
             if ("${{ inputs.includeSymbols }}" -eq "true") { $cmd += " -Symbols" }
             if ("${{ inputs.toolPackage }}" -eq "true") { $cmd += " -Tool" }
-            if ("${{ inputs.buildProperties }}" -ne "") { $cmd += " -Properties `"$(${{ inputs.buildProperties }})`"" }
+            if ("${{ inputs.buildProperties }}" -ne "") { $cmd += " -Properties `"$(${{ inputs.buildProperties }})`" }
+            if ("${{ inputs.configuration }}" -ne "" -and "${{ inputs.buildProperties }}" -eq "") {
+              # if configuration provided and buildProperties not set, use configuration
+              $cmd += " -Properties Configuration=`"$(${{ inputs.configuration }})`""
+            }
             if ("${{ inputs.verbosityPack }}" -ne "") { $cmd += " -Verbosity $(${{ inputs.verbosityPack }})" }
 
-            if ("${{ inputs.versioningScheme }}" -eq "byPrereleaseNumber") {
-              $ver = "${{ inputs.majorVersion }}.${{ inputs.minorVersion }}.${{ inputs.patchVersion }}-ci"
-              $cmd += " -Version $ver"
-            } elseif ("${{ inputs.versioningScheme }}" -eq "byEnvVar") {
-              if ("${{ inputs.versionEnvVar }}" -ne "") {
-                $envVer = $env:"${{ inputs.versionEnvVar }}"
-                if ($envVer) { $cmd += " -Version $envVer" }
+            # versioning scheme handling
+            switch ("${{ inputs.versioningScheme }}".ToLower()) {
+              "off" {
+                Write-Host "Versioning scheme off: use existing versions from project/nuspec"
               }
-            } elseif ("${{ inputs.versioningScheme }}" -eq "byBuildNumber") {
-              if ($env:GITHUB_RUN_NUMBER) { $cmd += " -Version $($env:GITHUB_RUN_NUMBER)" }
+              "byprereleasenumber" {
+                $major = "${{ inputs.majorVersion }}"
+                $minor = "${{ inputs.minorVersion }}"
+                $patch = "${{ inputs.patchVersion }}"
+                if ("${{ inputs.packTimezone }}" -eq "utc") {
+                  $ts = (Get-Date).ToUniversalTime().ToString("yyyyMMddHHmm")
+                } else {
+                  $ts = (Get-Date).ToString("yyyyMMddHHmm")
+                }
+                $ver = "$major.$minor.$patch-ci.$ts"
+                $cmd += " -Version $ver"
+              }
+              "byenvvar" {
+                if ("${{ inputs.versionEnvVar }}" -eq "") { throw "versionEnvVar required for byEnvVar versioning" }
+                $envName = "${{ inputs.versionEnvVar }}"
+                $envVal = (Get-ChildItem env:$envName).Value
+                if (-not $envVal) { throw "Environment variable '$envName' is not set for versioning" }
+                $cmd += " -Version $envVal"
+              }
+              "bybuildnumber" {
+                if ($env:GITHUB_RUN_NUMBER) { $cmd += " -Version $($env:GITHUB_RUN_NUMBER)" } else { Write-Host "GITHUB_RUN_NUMBER not set; skipping version set" }
+              }
+              default {
+                Write-Host "Unknown versioningScheme '${{ inputs.versioningScheme }}' - no version applied"
+              }
             }
+
+            if ("${{ inputs.includeReferencedProjects }}" -eq "true") { $cmd += " -IncludeReferencedProjects" }
           }
-          elseif ($cmdType -eq "push") {
+          elseif ($c -eq "push") {
+            # push logic: supports semicolon-separated patterns
             $raw = "${{ inputs.packagesToPush }}"
             $packages = $raw -split ";"
+            # decide source based on nuGetFeedType
             $source = ""
             if ("${{ inputs.nuGetFeedType }}" -eq "internal" -and "${{ inputs.publishVstsFeed }}" -ne "") {
               $source = "${{ inputs.publishVstsFeed }}"
             } elseif ("${{ inputs.nuGetFeedType }}" -eq "external" -and "${{ inputs.publishFeedCredentials }}" -ne "") {
               $source = "${{ inputs.publishFeedCredentials }}"
-            } elseif ("${{ inputs.includeNuGetOrg }}" -eq "true") {
-              $source = "https://api.nuget.org/v3/index.json"
+            } else {
+              if ("${{ inputs.includeNuGetOrg }}" -eq "true") { $source = "https://api.nuget.org/v3/index.json" }
+              elseif ("${{ inputs.vstsFeed }}" -ne "") { $source = "${{ inputs.vstsFeed }}" }
+            }
+
+            if ("${{ inputs.publishPackageMetadata }}" -eq "true") {
+              Write-Host "Publishing package metadata is enabled (informational only in this script)."
             }
 
             foreach ($p in $packages) {
-              $pTrim = $p.Trim()
-              if ($pTrim -eq "") { continue }
-              $pushCmd = ".\nuget.exe push `"$pTrim`""
+              $pkg = $p.Trim()
+              if ($pkg -eq "") { continue }
+              $pushCmd = "nuget.exe push `"$pkg`""
               if ($source -ne "") { $pushCmd += " -Source `"$source`"" }
-              if ($env:NUGET_API_KEY) { $pushCmd += " -ApiKey `"$env:NUGET_API_KEY`"" } else { Write-Host "No NUGET_API_KEY set; ensure feed auth is configured" }
+              if ($env:NUGET_API_KEY) { $pushCmd += " -ApiKey `"$env:NUGET_API_KEY`"" } else { Write-Host "No NUGET_API_KEY secret present; ensure feed auth configured if needed." }
               if ("${{ inputs.allowPackageConflicts }}" -eq "true") { $pushCmd += " -SkipDuplicate" }
               if ("${{ inputs.verbosityPush }}" -ne "") { $pushCmd += " -Verbosity $(${{ inputs.verbosityPush }})" }
               Write-Host "Executing: $pushCmd"
               Invoke-Expression $pushCmd
             }
 
-            # mark as done; avoid running final $cmd below
+            # nothing left to execute in $cmd
             $cmd = ""
           }
-          elseif ($cmdType -eq "custom") {
-            if ("${{ inputs.arguments }}" -eq "") { throw "Custom command requested but no arguments provided." }
-            $cmd = ".\nuget.exe $(${{ inputs.arguments }})"
+          elseif ($c -eq "custom") {
+            if ("${{ inputs.arguments }}" -eq "") { throw "Custom command requested but no arguments supplied." }
+            $cmd = "nuget.exe $(${{ inputs.arguments }})"
           }
           else {
-            throw "Unsupported command: $cmdType"
+            throw "Unsupported command: $c"
           }
 
           if ($cmd -ne "") {
@@ -192,5 +248,6 @@ jobs:
             Invoke-Expression $cmd
           }
 
-          echo "::set-output name=ran::$cmd"
+          # expose the final constructed command for debugging
+          Write-Host "::set-output name=constructed::$cmd"
         shell: pwsh
