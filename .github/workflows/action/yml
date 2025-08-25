@@ -1,253 +1,273 @@
-name: Reusable NuGet 
+name: NuGet Reusable Workflow
+
 on:
   workflow_call:
     inputs:
       command:
+        required: true
         type: string
-        default: 'restore'
+        description: "Command to run: restore | pack | push"
       restoreSolution:
+        required: false
         type: string
-        default: '**/*.sln'
-      packagesToPush:
-        type: string
-        default: '$(Build.ArtifactStagingDirectory)/**/*.nupkg;!$(Build.ArtifactStagingDirectory)/**/*.symbols.nupkg'
-      nuGetFeedType:
-        type: string
-        default: 'internal'
-      publishVstsFeed:
-        type: string
-        default: ''
-      allowPackageConflicts:
-        type: string
-        default: 'false'
-      publishFeedCredentials:
-        type: string
-        default: ''
-      packagesToPack:
-        type: string
-        default: '**/*.csproj'
-      configuration:
-        type: string
-        default: '$(BuildConfiguration)'
-      packDestination:
-        type: string
-        default: '$(Build.ArtifactStagingDirectory)'
-      arguments:
-        type: string
-        default: ''
+        default: ""
       feedsToUse:
+        required: false
         type: string
-        default: 'select'
+        default: ""
       vstsFeed:
+        required: false
         type: string
-        default: ''
+        default: ""
       includeNuGetOrg:
+        required: false
         type: string
-        default: 'true'
+        default: "true"
       nugetConfigPath:
+        required: false
         type: string
-        default: ''
+        default: ""
       externalFeedCredentials:
+        required: false
         type: string
-        default: ''
+        default: ""
       noCache:
-        type: string
-        default: 'false'
+        required: false
+        type: boolean
+        default: false
       disableParallelProcessing:
-        type: string
-        default: 'false'
+        required: false
+        type: boolean
+        default: false
       restoreDirectory:
+        required: false
         type: string
-        default: ''
+        default: ""
       verbosityRestore:
+        required: false
         type: string
-        default: 'Detailed'
+        default: "Detailed"
+      packagesToPush:
+        required: false
+        type: string
+        default: ""
+      nuGetFeedType:
+        required: false
+        type: string
+        default: "internal"
+      publishVstsFeed:
+        required: false
+        type: string
+        default: ""
+      allowPackageConflicts:
+        required: false
+        type: boolean
+        default: false
+      publishFeedCredentials:
+        required: false
+        type: string
+        default: ""
+      packagesToPack:
+        required: false
+        type: string
+        default: "**/*.csproj"
+      configuration:
+        required: false
+        type: string
+        default: "Release"
+      packDestination:
+        required: false
+        type: string
+        default: ""
+      arguments:
+        required: false
+        type: string
+        default: ""
       publishPackageMetadata:
-        type: string
-        default: 'true'
+        required: false
+        type: boolean
+        default: true
       verbosityPush:
+        required: false
         type: string
-        default: 'Detailed'
+        default: "Detailed"
       versioningScheme:
+        required: false
         type: string
-        default: 'off'
+        default: "off"
       includeReferencedProjects:
-        type: string
-        default: 'false'
+        required: false
+        type: boolean
+        default: false
       versionEnvVar:
+        required: false
         type: string
-        default: ''
+        default: ""
       majorVersion:
-        type: string
-        default: '1'
+        required: false
+        type: number
+        default: 1
       minorVersion:
-        type: string
-        default: '0'
+        required: false
+        type: number
+        default: 0
       patchVersion:
-        type: string
-        default: '0'
+        required: false
+        type: number
+        default: 0
       packTimezone:
+        required: false
         type: string
-        default: 'utc'
+        default: "utc"
       includeSymbols:
-        type: string
-        default: 'false'
+        required: false
+        type: boolean
+        default: false
       toolPackage:
-        type: string
-        default: 'false'
+        required: false
+        type: boolean
+        default: false
       buildProperties:
+        required: false
         type: string
-        default: ''
+        default: ""
       basePath:
+        required: false
         type: string
-        default: ''
+        default: ""
       verbosityPack:
+        required: false
         type: string
-        default: 'Detailed'
+        default: "Detailed"
+      verbosity:
+        required: false
+        type: string
+        default: "detailed"
+      nuGetRestoreArgs:
+        required: false
+        type: string
+        default: ""
+      nuGetVersion:
+        required: false
+        type: string
+        default: "5.9.0"
+      nuGetPath:
+        required: false
+        type: string
+        default: "./nuget.exe"
+      searchPattern:
+        required: false
+        type: string
+        default: "*.csproj"
+      outputdir:
+        required: false
+        type: string
+        default: ""
+      versionByBuild:
+        required: false
+        type: boolean
+        default: false
+      packTimezoneDescription:
+        required: false
+        type: string
+        default: ""
+      skipDuplicate:
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      publishFeedApiKey:
+        required: false
+      apiKey:
+        required: false
 
 jobs:
-  run-nuget:
+  nuget:
     runs-on: windows-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-      - name: Download nuget.exe
+      - name: Validate nuget.config Path (if provided)
+        if: ${{ inputs.nugetConfigPath != '' }}
         run: |
-          Invoke-WebRequest -Uri "https://dist.nuget.org/win-x86-commandline/latest/nuget.exe" -OutFile nuget.exe
-        shell: pwsh
+          if (!(Test-Path "${{ inputs.nugetConfigPath }}")) {
+            Write-Error "nuget.config file not found at path: ${{ inputs.nugetConfigPath }}"
+            exit 1
+          }
 
-      - name: Build & run nuget command 
-        id: execute
+      - name: Ensure nuget.exe present
         run: |
-          $cmd = ""
-          $c = "${{ inputs.command }}".ToLower()
-
-          if ($c -eq "restore") {
-            # basic restore invocation
-            $cmd = "nuget.exe restore `"$(${{ inputs.restoreSolution }})`" 
-
-            # feeds selection logic
-            if ("${{ inputs.feedsToUse }}" -eq "config") {
-              if ("${{ inputs.nugetConfigPath }}" -ne "") {
-                $cmd += " -ConfigFile `"$(${{ inputs.nugetConfigPath }})`" 
-                Write-Host "Using nuget.config at $(${{ inputs.nugetConfigPath }})"
-              }
-              if ("${{ inputs.externalFeedCredentials }}" -ne "") {
-                Write-Host "External feed credentials provided; ensure nuget.config includes source credentials or credential provider."
-              }
-            } else {
-              # select mode
-              if ("${{ inputs.vstsFeed }}" -ne "") {
-                $cmd += " -Source `"$(${{ inputs.vstsFeed }})`" 
-              } elseif ("${{ inputs.includeNuGetOrg }}" -eq "true") {
-                # nuget.org is used by default if includeNuGetOrg true
-                Write-Host "NuGet.org packages allowed in restore"
-              }
-            }
-
-            # optional flags
-            if ("${{ inputs.restoreDirectory }}" -ne "") { $cmd += " -PackagesDirectory `"$(${{ inputs.restoreDirectory }})`" }
-            if ("${{ inputs.noCache }}" -eq "true") { $cmd += " -NoCache" }
-            if ("${{ inputs.disableParallelProcessing }}" -eq "true") { $cmd += " -DisableParallelProcessing" }
-            if ("${{ inputs.verbosityRestore }}" -ne "") { $cmd += " -Verbosity $(${{ inputs.verbosityRestore }})" }
+          $nugetPath = "${{ inputs.nuGetPath }}"
+          if (-not $nugetPath) { $nugetPath = "./nuget.exe" }
+          if (!(Test-Path $nugetPath)) {
+            Invoke-WebRequest -Uri "https://dist.nuget.org/win-x86-commandline/v${{ inputs.nuGetVersion }}/nuget.exe" -OutFile $nugetPath
           }
-          elseif ($c -eq "pack") {
-            # pack invocation
-            $cmd = "nuget.exe pack `"$(${{ inputs.packagesToPack }})`" 
+        shell: powershell
 
-            if ("${{ inputs.basePath }}" -ne "") { $cmd += " -BasePath `"$(${{ inputs.basePath }})`" }
-            if ("${{ inputs.packDestination }}" -ne "") { $cmd += " -OutputDirectory `"$(${{ inputs.packDestination }})`" }
-            if ("${{ inputs.includeSymbols }}" -eq "true") { $cmd += " -Symbols" }
-            if ("${{ inputs.toolPackage }}" -eq "true") { $cmd += " -Tool" }
-            if ("${{ inputs.buildProperties }}" -ne "") { $cmd += " -Properties `"$(${{ inputs.buildProperties }})`" }
-            if ("${{ inputs.configuration }}" -ne "" -and "${{ inputs.buildProperties }}" -eq "") {
-              # if configuration provided and buildProperties not set, use configuration
-              $cmd += " -Properties Configuration=`"$(${{ inputs.configuration }})`""
-            }
-            if ("${{ inputs.verbosityPack }}" -ne "") { $cmd += " -Verbosity $(${{ inputs.verbosityPack }})" }
+      - name: Restore NuGet Packages
+        if: ${{ inputs.command == 'restore' }}
+        run: |
+          $nuget = "${{ inputs.nuGetPath }}"
+          if (-not (Test-Path $nuget)) { $nuget = "./nuget.exe" }
+          $cmd = "$nuget restore `"$(${{ inputs.restoreSolution }})`" 
+          if (${{ inputs.nugetConfigPath }} -ne "") { $cmd += " -ConfigFile `"$(${{ inputs.nugetConfigPath }})`"" }
+          if (${{ inputs.packagesDirectory }} -ne "") { $cmd += " -PackagesDirectory `"$(${{ inputs.packagesDirectory }})`"" }
+          if ("${{ inputs.verbosityRestore }}" -ne "") { $cmd += " -Verbosity $${{ inputs.verbosityRestore }}" }
+          if (${{ inputs.noCache }}) { $cmd += " -NoCache" }
+          if (${{ inputs.disableParallelProcessing }}) { $cmd += " -DisableParallelProcessing" }
+          if (${{ inputs.nuGetRestoreArgs }} -ne "") { $cmd += " $${{ inputs.nuGetRestoreArgs }}" }
+          Write-Host "Running: $cmd"
+          iex $cmd
+        shell: powershell
 
-            # versioning scheme handling
-            switch ("${{ inputs.versioningScheme }}".ToLower()) {
-              "off" {
-                Write-Host "Versioning scheme off: use existing versions from project/nuspec"
-              }
-              "byprereleasenumber" {
-                $major = "${{ inputs.majorVersion }}"
-                $minor = "${{ inputs.minorVersion }}"
-                $patch = "${{ inputs.patchVersion }}"
-                if ("${{ inputs.packTimezone }}" -eq "utc") {
-                  $ts = (Get-Date).ToUniversalTime().ToString("yyyyMMddHHmm")
-                } else {
-                  $ts = (Get-Date).ToString("yyyyMMddHHmm")
-                }
-                $ver = "$major.$minor.$patch-ci.$ts"
-                $cmd += " -Version $ver"
-              }
-              "byenvvar" {
-                if ("${{ inputs.versionEnvVar }}" -eq "") { throw "versionEnvVar required for byEnvVar versioning" }
-                $envName = "${{ inputs.versionEnvVar }}"
-                $envVal = (Get-ChildItem env:$envName).Value
-                if (-not $envVal) { throw "Environment variable '$envName' is not set for versioning" }
-                $cmd += " -Version $envVal"
-              }
-              "bybuildnumber" {
-                if ($env:GITHUB_RUN_NUMBER) { $cmd += " -Version $($env:GITHUB_RUN_NUMBER)" } else { Write-Host "GITHUB_RUN_NUMBER not set; skipping version set" }
-              }
-              default {
-                Write-Host "Unknown versioningScheme '${{ inputs.versioningScheme }}' - no version applied"
-              }
-            }
-
-            if ("${{ inputs.includeReferencedProjects }}" -eq "true") { $cmd += " -IncludeReferencedProjects" }
+      - name: Pack Projects
+        if: ${{ inputs.command == 'pack' }}
+        run: |
+          $isTool = ${{ inputs.toolPackage }}
+          $projPattern = "${{ inputs.packagesToPack }}"
+          $outDir = "${{ inputs.packDestination }}"
+          $config = "${{ inputs.configuration }}"
+          $props = "${{ inputs.buildProperties }}"
+          $includeSymbols = ${{ inputs.includeSymbols }}
+          if ($isTool -eq $true) {
+            Write-Host "Using dotnet pack for tool packaging"
+            dotnet pack $projPattern -c $config -o $outDir $props
+          } else {
+            # prefer dotnet pack for csproj packs
+            Write-Host "Using dotnet pack"
+            $packArgs = "pack $projPattern -c $config -o $outDir"
+            if ($props -ne "") { $packArgs += " -p:$props" }
+            if ($includeSymbols -eq $true) { $packArgs += " --include-symbols" }
+            if ("${{ inputs.verbosityPack }}" -ne "") { $packArgs += " -v $${{ inputs.verbosityPack }}" }
+            if ("${{ inputs.arguments }}" -ne "") { $packArgs += " $${{ inputs.arguments }}" }
+            Write-Host "Running: dotnet $packArgs"
+            dotnet $packArgs
           }
-          elseif ($c -eq "push") {
-            # push logic: supports semicolon-separated patterns
-            $raw = "${{ inputs.packagesToPush }}"
-            $packages = $raw -split ";"
-            # decide source based on nuGetFeedType
-            $source = ""
-            if ("${{ inputs.nuGetFeedType }}" -eq "internal" -and "${{ inputs.publishVstsFeed }}" -ne "") {
-              $source = "${{ inputs.publishVstsFeed }}"
-            } elseif ("${{ inputs.nuGetFeedType }}" -eq "external" -and "${{ inputs.publishFeedCredentials }}" -ne "") {
-              $source = "${{ inputs.publishFeedCredentials }}"
-            } else {
-              if ("${{ inputs.includeNuGetOrg }}" -eq "true") { $source = "https://api.nuget.org/v3/index.json" }
-              elseif ("${{ inputs.vstsFeed }}" -ne "") { $source = "${{ inputs.vstsFeed }}" }
-            }
+        shell: bash
 
-            if ("${{ inputs.publishPackageMetadata }}" -eq "true") {
-              Write-Host "Publishing package metadata is enabled (informational only in this script)."
-            }
-
-            foreach ($p in $packages) {
-              $pkg = $p.Trim()
-              if ($pkg -eq "") { continue }
-              $pushCmd = "nuget.exe push `"$pkg`""
-              if ($source -ne "") { $pushCmd += " -Source `"$source`"" }
-              if ($env:NUGET_API_KEY) { $pushCmd += " -ApiKey `"$env:NUGET_API_KEY`"" } else { Write-Host "No NUGET_API_KEY secret present; ensure feed auth configured if needed." }
-              if ("${{ inputs.allowPackageConflicts }}" -eq "true") { $pushCmd += " -SkipDuplicate" }
-              if ("${{ inputs.verbosityPush }}" -ne "") { $pushCmd += " -Verbosity $(${{ inputs.verbosityPush }})" }
-              Write-Host "Executing: $pushCmd"
-              Invoke-Expression $pushCmd
-            }
-
-            # nothing left to execute in $cmd
-            $cmd = ""
+      - name: Push Packages
+        if: ${{ inputs.command == 'push' }}
+        run: |
+          $packages = "${{ inputs.packagesToPush }}"
+          if (-not $packages -or $packages -eq "") {
+            Write-Error "packagesToPush is required for push"
+            exit 1
           }
-          elseif ($c -eq "custom") {
-            if ("${{ inputs.arguments }}" -eq "") { throw "Custom command requested but no arguments supplied." }
-            $cmd = "nuget.exe $(${{ inputs.arguments }})"
+          $source = "${{ inputs.publishFeedCredentials }}"
+          $apiKeySecret = "${{ secrets.publishFeedApiKey }}"
+          if ($source -eq "") {
+            Write-Host "No explicit feed endpoint provided. Using default feed settings."
           }
-          else {
-            throw "Unsupported command: $c"
+          # Use dotnet nuget push (works for both nuget.org and other v3 endpoints)
+          $pushCmd = "dotnet nuget push `"$packages`" -s `"$source`""
+          if ($apiKeySecret -ne "") {
+            $pushCmd += " -k `"$apiKeySecret`""
+          } else {
+            Write-Host "Warning: No publishFeedApiKey secret provided. Push may fail if authentication required."
           }
-
-          if ($cmd -ne "") {
-            Write-Host "Executing: $cmd"
-            Invoke-Expression $cmd
-          }
-
-          # expose the final constructed command for debugging
-          Write-Host "::set-output name=constructed::$cmd"
-        shell: pwsh
+          if ("${{ inputs.verbosityPush }}" -ne "") { $pushCmd += " -v $${{ inputs.verbosityPush }}" }
+          if (${{ inputs.skipDuplicate }}) { $pushCmd += " --skip-duplicate" }
+          Write-Host "Running: $pushCmd"
+          iex $pushCmd
+        shell: powershell
