@@ -1,0 +1,292 @@
+name: Reusable NuGet 
+on:
+  workflow_call:
+    inputs:
+      command:
+        type: string
+        default: 'restore'
+      restoreSolution:
+        type: string
+        default: '**/*.sln'
+      packagesToPush:
+        type: string
+        default: '$(Build.ArtifactStagingDirectory)/**/*.nupkg;!$(Build.ArtifactStagingDirectory)/**/*.symbols.nupkg'
+      nuGetFeedType:
+        type: string
+        default: 'internal'
+      publishVstsFeed:
+        type: string
+        default: ''
+      allowPackageConflicts:
+        type: string
+        default: 'false'
+      publishFeedCredentials:
+        type: string
+        default: ''
+      packagesToPack:
+        type: string
+        default: '**/*.csproj'
+      configuration:
+        type: string
+        default: '$(BuildConfiguration)'
+      packDestination:
+        type: string
+        default: '$(Build.ArtifactStagingDirectory)'
+      arguments:
+        type: string
+        default: ''
+      feedsToUse:
+        type: string
+        default: 'select'
+      vstsFeed:
+        type: string
+        default: ''
+      includeNuGetOrg:
+        type: string
+        default: 'true'
+      nugetConfigPath:
+        type: string
+        default: ''
+      externalFeedCredentials:
+        type: string
+        default: ''
+      noCache:
+        type: string
+        default: 'false'
+      disableParallelProcessing:
+        type: string
+        default: 'false'
+      restoreDirectory:
+        type: string
+        default: ''
+      verbosityRestore:
+        type: string
+        default: 'Detailed'
+      publishPackageMetadata:
+        type: string
+        default: 'true'
+      verbosityPush:
+        type: string
+        default: 'Detailed'
+      versioningScheme:
+        type: string
+        default: 'off'
+      includeReferencedProjects:
+        type: string
+        default: 'false'
+      versionEnvVar:
+        type: string
+        default: ''
+      majorVersion:
+        type: string
+        default: '1'
+      minorVersion:
+        type: string
+        default: '0'
+      patchVersion:
+        type: string
+        default: '0'
+      packTimezone:
+        type: string
+        default: 'utc'
+      includeSymbols:
+        type: string
+        default: 'false'
+      toolPackage:
+        type: string
+        default: 'false'
+      buildProperties:
+        type: string
+        default: ''
+      basePath:
+        type: string
+        default: ''
+      verbosityPack:
+        type: string
+        default: 'Detailed'
+
+jobs:
+  nuget:
+    runs-on: windows-latest
+    outputs:
+      executed-command: ${{ steps.run-nuget.outputs.executed-cmd }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup nuget.exe
+        run: |
+          $nugetUrl = "https://dist.nuget.org/win-x86-commandline/latest/nuget.exe"
+          Invoke-WebRequest -Uri $nugetUrl -OutFile nuget.exe
+
+      - name: Prepare environment variables
+        id: prep
+        run: |
+          # normalize booleans to lower
+          $env:IN_command = '${{ inputs.command }}'
+          $env:IN_restoreSolution = '${{ inputs.restoreSolution }}'
+          $env:IN_packagesToPush = '${{ inputs.packagesToPush }}'
+          $env:IN_nuGetFeedType = '${{ inputs.nuGetFeedType }}'
+          $env:IN_publishVstsFeed = '${{ inputs.publishVstsFeed }}'
+          $env:IN_allowPackageConflicts = '${{ inputs.allowPackageConflicts }}'.ToLower()
+          $env:IN_publishFeedCredentials = '${{ inputs.publishFeedCredentials }}'
+          $env:IN_packagesToPack = '${{ inputs.packagesToPack }}'
+          $env:IN_configuration = '${{ inputs.configuration }}'
+          $env:IN_packDestination = '${{ inputs.packDestination }}'
+          $env:IN_arguments = '${{ inputs.arguments }}'
+          $env:IN_feedsToUse = '${{ inputs.feedsToUse }}'
+          $env:IN_vstsFeed = '${{ inputs.vstsFeed }}'
+          $env:IN_includeNuGetOrg = '${{ inputs.includeNuGetOrg }}'.ToLower()
+          $env:IN_nugetConfigPath = '${{ inputs.nugetConfigPath }}'
+          $env:IN_externalFeedCredentials = '${{ inputs.externalFeedCredentials }}'
+          $env:IN_noCache = '${{ inputs.noCache }}'.ToLower()
+          $env:IN_disableParallelProcessing = '${{ inputs.disableParallelProcessing }}'.ToLower()
+          $env:IN_restoreDirectory = '${{ inputs.restoreDirectory }}'
+          $env:IN_verbosityRestore = '${{ inputs.verbosityRestore }}'
+          $env:IN_publishPackageMetadata = '${{ inputs.publishPackageMetadata }}'.ToLower()
+          $env:IN_verbosityPush = '${{ inputs.verbosityPush }}'
+          $env:IN_versioningScheme = '${{ inputs.versioningScheme }}'
+          $env:IN_includeReferencedProjects = '${{ inputs.includeReferencedProjects }}'.ToLower()
+          $env:IN_versionEnvVar = '${{ inputs.versionEnvVar }}'
+          $env:IN_majorVersion = '${{ inputs.majorVersion }}'
+          $env:IN_minorVersion = '${{ inputs.minorVersion }}'
+          $env:IN_patchVersion = '${{ inputs.patchVersion }}'
+          $env:IN_packTimezone = '${{ inputs.packTimezone }}'
+          $env:IN_includeSymbols = '${{ inputs.includeSymbols }}'.ToLower()
+          $env:IN_toolPackage = '${{ inputs.toolPackage }}'.ToLower()
+          $env:IN_buildProperties = '${{ inputs.buildProperties }}'
+          $env:IN_basePath = '${{ inputs.basePath }}'
+          $env:IN_verbosityPack = '${{ inputs.verbosityPack }}'
+          Write-Host "Prepared environment variables for command: $env:IN_command"
+
+      - name: Build and run nuget.exe command
+        id: run-nuget
+        run: |
+          $cmd = ""
+          $command = $env:IN_command.ToLower()
+
+          # Helper to append flags if present
+          function Append-Flag([string]$flag) { if ($flag -ne "") { $cmd += " $flag" } }
+
+          if ($command -eq "restore") {
+            $cmd = ".\nuget.exe restore $($env:IN_restoreSolution)"
+            if ($env:IN_nugetConfigPath -ne "") { $cmd += " -ConfigFile `"$($env:IN_nugetConfigPath)`"" }
+            if ($env:IN_restoreDirectory -ne "") { $cmd += " -PackagesDirectory `"$($env:IN_restoreDirectory)`"" }
+            if ($env:IN_noCache -eq "true") { $cmd += " -NoCache" }
+            if ($env:IN_disableParallelProcessing -eq "true") { $cmd += " -DisableParallelProcessing" }
+            if ($env:IN_verbosityRestore -ne "") { $cmd += " -Verbosity $($env:IN_verbosityRestore)" }
+            # feedsToUse logic: use config file if 'config', otherwise trust system/environment for auth
+            if ($env:IN_feedsToUse -eq "config" -and $env:IN_externalFeedCredentials -ne "") {
+              # This is a placeholder to show where you'd configure external feed auth
+              Write-Host "Using external feed credentials (provided). Ensure credentials are available in nuget config."
+            }
+          }
+          elseif ($command -eq "pack") {
+            $cmd = ".\nuget.exe pack $($env:IN_packagesToPack)"
+            if ($env:IN_basePath -ne "") { $cmd += " -BasePath `"$($env:IN_basePath)`"" }
+            if ($env:IN_packDestination -ne "") { $cmd += " -OutputDirectory `"$($env:IN_packDestination)`"" }
+            if ($env:IN_includeSymbols -eq "true") { $cmd += " -Symbols" }
+            if ($env:IN_toolPackage -eq "true") { $cmd += " -Tool" }
+            if ($env:IN_buildProperties -ne "") { $cmd += " -Properties `"$($env:IN_buildProperties)`"" }
+            if ($env:IN_verbosityPack -ne "") { $cmd += " -Verbosity $($env:IN_verbosityPack)" }
+
+            # Versioning scheme
+            switch ($env:IN_versioningScheme.ToLower()) {
+              "off" {
+                Write-Host "Versioning scheme off: using project file versions"
+              }
+              "bybuildnumber" {
+                $ver = $env:GITHUB_RUN_NUMBER
+                if (-not $ver) { $ver = "0" }
+                $cmd += " -Version $ver"
+              }
+              "byenvvar" {
+                if ($env:IN_versionEnvVar -ne "") {
+                  $ver = (Get-ChildItem env:$($env:IN_versionEnvVar)).Value
+                  if (-not $ver) { throw "versionEnvVar '$($env:IN_versionEnvVar)' was not set in environment." }
+                  $cmd += " -Version $ver"
+                } else { throw "versioningScheme=byEnvVar requires versionEnvVar input." }
+              }
+              "byprereleasenumber" {
+                # Compose semantic with prerelease containing build/run id or timestamp
+                $major = $env:IN_majorVersion
+                $minor = $env:IN_minorVersion
+                $patch = $env:IN_patchVersion
+                if ($env:IN_packTimezone -eq "utc") {
+                  $ts = (Get-Date).ToUniversalTime().ToString("yyyyMMddHHmm")
+                } else {
+                  $ts = (Get-Date).ToString("yyyyMMddHHmm")
+                }
+                $pr = "$major.$minor.$patch-alpha.$ts"
+                $cmd += " -Version $pr"
+              }
+              default {
+                Write-Host "Unknown versioningScheme '$($env:IN_versioningScheme)'. No -Version applied."
+              }
+            }
+
+            if ($env:IN_includeReferencedProjects -eq "true") { $cmd += " -IncludeReferencedProjects" }
+          }
+          elseif ($command -eq "push") {
+            # packagesToPush may be a semicolon-separated list or glob
+            $packages = $env:IN_packagesToPush
+            # split on semicolon (NuGetCommand@2 default uses semicolon)
+            $packageList = $packages -split ";"
+            # Resolve which source to push to
+            $source = ""
+            if ($env:IN_nuGetFeedType -eq "internal" -and $env:IN_publishVstsFeed -ne "") {
+              $source = $env:IN_publishVstsFeed
+            } elseif ($env:IN_nuGetFeedType -eq "external" -and $env:IN_publishFeedCredentials -ne "") {
+              # publishFeedCredentials could be an API key or endpoint name in your runner
+              $source = $env:IN_publishFeedCredentials
+            } else {
+              # fallback: use vstsFeed if set else nuget.org
+              if ($env:IN_vstsFeed -ne "") { $source = $env:IN_vstsFeed } else { if ($env:IN_includeNuGetOrg -eq "true") { $source = "https://api.nuget.org/v3/index.json" } }
+            }
+
+            # publish metadata is informational here
+            if ($env:IN_publishPackageMetadata -eq "true") { Write-Host "Publishing package metadata enabled." }
+
+            foreach ($p in $packageList) {
+              $trim = $p.Trim()
+              if ($trim -eq "") { continue }
+              $pushCmd = ".\nuget.exe push `"$trim`""
+              if ($source -ne "") { $pushCmd += " -Source `"$source`"" }
+              # If you have an API key secret (recommended), pass via environment variable
+              if ($env:NUGET_API_KEY) {
+                $pushCmd += " -ApiKey `"$env:NUGET_API_KEY`""
+              } else {
+                #Some feeds (Azure Artifacts) use authenticated feeds; in CI, prefer to configure nuget.config with credentials
+                Write-Host "No NUGET_API_KEY env var found; ensure feed auth is configured if required."
+              }
+              if ($env:IN_allowPackageConflicts -eq "true") {
+                # nuget.exe doesn't have a direct "allow duplicate" flag. For some feeds, -SkipDuplicate supported in dotnet nuget push
+                $pushCmd += " -SkipDuplicate"
+              }
+              if ($env:IN_verbosityPush -ne "") { $pushCmd += " -Verbosity $($env:IN_verbosityPush)" }
+              Write-Host "Pushing package with: $pushCmd"
+              Invoke-Expression $pushCmd
+            }
+            # Ensure we do not try to run a final $cmd below (push handled per package)
+          }
+          elseif ($command -eq "custom") {
+            if ($env:IN_arguments -eq "") { throw "Custom command requested but no arguments supplied." }
+            $cmd = ".\nuget.exe $($env:IN_arguments)"
+          }
+          else {
+            throw "Unsupported command: $command"
+          }
+
+          # If cmd is non-empty and hasn't been executed above for push's per-file logic, execute it
+          if ($cmd -ne "") {
+            Write-Host "Running: $cmd"
+            Invoke-Expression $cmd
+          }
+
+          # Output executed command for debugging or further steps
+          Write-Output "::set-output name=executed-cmd::$cmd"
+        shell: pwsh
+
+      - name: Show executed command
+        run: |
+          echo "Executed: ${{ steps.run-nuget.outputs.executed-cmd }}"
