@@ -1,5 +1,4 @@
-# yaml
-name: Reusable NuGet (simple)
+name: Reusable NuGet 
 on:
   workflow_call:
     inputs:
